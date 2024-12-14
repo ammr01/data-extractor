@@ -6,6 +6,7 @@
 
 
 
+
 # License: MIT License
 # 
 # Copyright (c) 2024 Amro Alasmer
@@ -30,12 +31,23 @@
 # 
 
 
-# 
-list=()
 
-error_flag=0
-default_error_code=1
+readonly __NOTE=1
+readonly __WARN=2
+readonly __WARNING=$__WARN
+readonly __ERROR=3
+readonly __EXIT=0
+readonly __RETURN=1
+readonly __NOTHING=2
+readonly __STDOUT=1
+readonly __STDERR=2
+readonly __ERROR_MESSAGE_ENABLE=0
+readonly __ERROR_MESSAGE_DISABLE=1
+readonly __SUCESS=0
+readonly default_error_code=1
 
+
+error_flag=$__ERROR_MESSAGE_ENABLE
 err(){
     # err [message] <type> <isexit> <exit/return code>
     #
@@ -65,95 +77,185 @@ err(){
     #      if not numeric or not set, the default 
     #      value will be used. 
     
+    if [ $error_flag -eq $__ERROR_MESSAGE_ENABLE ]; then 
+        return $__SUCESS
+    fi
+
     local text="$1"
     local type=${2-1}
     local isexit=${3-1}
     local error_code=${4-$default_error_code}
     local typestr=""
     local fd=1
-    
+
     if ! [[ "$type" =~ ^[0-9]+$ ]]; then
-        type=1
+        type=$__NOTE
     fi
 
     if ! [[ "$isexit" =~ ^[0-9]+$ ]]; then
-        isexit=1
+        isexit=$__RETURN
     fi
 
     if ! [[ "$error_code" =~ ^[0-9]+$ ]]; then
         error_code=$default_error_code
     fi
     case $type in 
-    1)
+    $__NOTE)
         typestr="NOTE"
-        fd=1 #stdout
+        fd=$__STDOUT
     ;;
-    2)
+    $__WARN)
         typestr="WARNING"
-        fd=1 #stdout
+        fd=$__STDOUT
     ;; 
-    3)
+    $__ERROR)
         typestr="ERROR"
-        fd=2 #stderr
+        fd=$__STDERR
     ;;
     *)
         typestr="NOTE"
-        fd=1 #stdout
+        fd=$__STDOUT
     ;;
     esac
     
-    if [ $error_flag -eq 0 ]; then 
-        >&$fd echo -e "[$typestr:START]\n$text\n[$typestr:END]"
-        if [ "$isexit" -eq 0 ]; then
-            exit "$error_code"
-        elif [ "$isexit" -eq 1 ]; then
-            return "$error_code"
-        fi
-
+    >&$fd echo -e "[$typestr:START]\n$text\n[$typestr:END]"
+    if [ "$isexit" -eq $__EXIT ]; then
+        exit "$error_code"
+    elif [ "$isexit" -eq $__RETURN ]; then
+        return "$error_code"
     fi
+
     
 }
 
-
-
 check_dependencies(){
  
-    which perl 1>/dev/null  ||    err "please install perl before use this script, for debian based system use \"sudo apt install perl dos2unix\"" 3 0 9
-    which dos2unix 1>/dev/null  ||    err "please install perl before use this script, for debian based system use \"sudo apt install perl dos2unix\"" 3 0 10
+    which perl 1>/dev/null      ||    err "please install perl, dos2unix, and gawk before use this script, for debian based system use \"sudo apt install perl dos2unix gawk\"" $__ERROR $__EXIT 2
+    which dos2unix 1>/dev/null  ||    err "please install perl, dos2unix, and gawk before use this script, for debian based system use \"sudo apt install perl dos2unix gawk\"" $__ERROR $__EXIT 3
+    which gawk 1>/dev/null      ||    err "please install perl, dos2unix, and gawk before use this script, for debian based system use \"sudo apt install perl dos2unix gawk\"" $__ERROR $__EXIT 4
+
 }
 
+
 show_help(){
-    echo "Usage: $0 "
+    echo "Usage: $0 [OPTIONS]"
+
+    echo "Options:"
+    echo "  -h, --help                          Show help and exit"
+    echo "  -i, --input-file <file>             Input data file"
+    echo "  -o, --output-file <file>            Output data file 'output format is csv'"
+    echo "  -c, --config-file <file>            Config file with parsing instructions"
+
+    echo ""
+    echo "Example:"
+    echo "  $0 -i input1.txt -i input2.csv -o output.csv -c config1.txt -c config3.conf"
 }
+
+
+handle_output(){
+    if [ $# -lt 3 ]; then
+        err "Few arguments to handle_output() function!" $__ERROR $__RETURN 5; return $?
+    elif [ $# -gt 3 ]; then
+        err "Many arguments to handle_output() function!" $__ERROR $__RETURN 6; return $?
+    fi
+
+    local tmp_output="$1"
+    local tmp_output2="$2"
+    local dst_file="$3"
+    head "$dst_file"
+    sed -i 's/"/""/g' "$dst_file"
+    sed -i 's/^.*$/"&"/' "$dst_file"
+    head "$dst_file"
+    
+    if [ `wc -l "$tmp_output" | cut -d' ' -f 1` -le 0 ]; then    
+        cat "$dst_file" > "$tmp_output2"    
+    else
+        paste -d ,  "$tmp_output" "$dst_file" > "$tmp_output2"    
+    fi
+
+    cp "$tmp_output2" "$tmp_output"
+
+}
+
+
+prepare_configs(){
+    sed  -i '/^[[:space:]]*$/d' "$configs" 
+    sed  -i  's/^[[:space:]]*//' "$configs"
+    sed  -i '/^[[:space:]]*#/d' "$configs" 
+}
+
+
+remove_tmp_files(){
+
+    rm "$configs"       || { err "error while removing tmp files!" $__ERROR $__RETURN 7; return $?  ; }
+    rm "$inputs"        || { err "error while removing tmp files!" $__ERROR $__RETURN 8; return $?  ; }
+    rm "$tmp_output2"   || { err "error while removing tmp files!" $__ERROR $__RETURN 10; return $? ; } 
+
+
+}
+
 
 
 extract(){
     if [ $# -lt 2 ]; then
-        err "Few arguments to extract() function!" 3 1 88; return $?
+        err "Few arguments to extract() function!" $__ERROR $__RETURN 11; return $?
     elif [ $# -gt 3 ]; then
-        err "Many arguments to extract() function!" 3 1 89; return $?
+        err "Many arguments to extract() function!" $__ERROR $__RETURN 12; return $?
     fi
 
-    local input="$1"
+    local input_file="$1"
     local regex="$2"
     local capture_group="$3"
     
-    if [ -z "$capture_group" ]; then
-        perl -nle "print   /"$regex"/g" <<< "$input"
+    if [ ! -n "$capture_group" ]; then 
+
+cat "$input_file" | perl -s -nle '
+    my $found = 0;
+    if (/$regex/mg) {
+        print "$&";
+        $found = 1;
+    }
+    print "N/A" unless $found;
+' -- -regex="$regex"
 
     else
-        perl -nle "print \"\$capture_group\"  /"$regex"/g" <<< "$input"
+ 
+cat "$input_file" | perl -s -nle '
+    my $found = 0;
+    if (/$regex/mg) {
+        print "$$capture_group";
+        $found = 1;
+    }
+    print "N/A" unless $found;
+' -- -capture_group="$capture_group" -regex="$regex"
+
 
     fi
 }
+
+get_field(){
+    gawk -F":" '{print $1}' <<< "$1"
+}
+
+get_capture_group(){
+    gawk -F: '{print $2}' <<< "$1"
+}
+
+get_regex(){
+    gawk -F:  '{print $3}' <<< "$1"
+}
+
+
 
 
 if [ $# -lt 1 ]; then
     show_help; exit 1
 fi
 check_dependencies
-configs=`mktmp`
-inputs=`mktmp`
+configs=`mktemp`
+inputs=`mktemp`
+tmp_output=`mktemp`
+tmp_output2=`mktemp`
 while [ $# -gt 0 ]; do
     case $1 in 
     -h|--help)
@@ -165,13 +267,12 @@ while [ $# -gt 0 ]; do
         if [ -n "$2" ]; then        
             input_file="$(realpath "$2" )"
             if [ ! -f "$input_file" ]; then
-                err "input file is not found : $input_file" 3 0 15
+                err "input file is not found : $input_file" $__ERROR $__EXIT 13
             fi
             shift 2
-            dos2unix "$input_file" 1>/dev/null 2>/dev/null || err "dos2unix Error!" 3 0 28
             cat "$input_file" >> "$inputs" 
         else
-            err "-i option requires argument." 3 0 8
+            err "-i|--input-file option requires argument." $__ERROR $__EXIT 14
         fi
     ;;
     -o|--output-file)
@@ -179,7 +280,7 @@ while [ $# -gt 0 ]; do
             output_file="$(realpath "$2" )"
             shift 2
         else
-            err "-o option requires argument." 3 0 9
+            err "-o|--output-file option requires argument." $__ERROR $__EXIT  15
         fi
     ;;
 
@@ -188,13 +289,12 @@ while [ $# -gt 0 ]; do
             config_file="$(realpath "$2" )"
             
             if [ ! -f "$config_file" ] ; then
-                err "cannot find file: $config_file, staus code: $?" 2 2 0   
+                err "config file is not found : $config_file" $__ERROR $__EXIT 16
             fi
             shift 2
-            dos2unix "$config_file" 1>/dev/null 2>/dev/null || err "dos2unix Error!" 3 0 28
             cat "$config_file" >> "$configs"
         else
-            err "-c option requires argument." 3 0 9
+            err "-c|--config-file option requires argument." $__ERROR $__EXIT  17
         fi
     ;;
 
@@ -204,15 +304,25 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-get_fields "$configs"
-fields=("${list[@]}")
+dos2unix "$inputs" 1>/dev/null 2>/dev/null || err "dos2unix Error!" $__ERROR $__EXIT  18
+dos2unix "$configs" 1>/dev/null 2>/dev/null || err "dos2unix Error!" $__ERROR $__EXIT  19
+
+prepare_configs  2>/dev/null || err "configs file preperation error!" $__ERROR $__EXIT  20 
+
+if [ -n "$output_file" ] || [ -z "$output_file" ]; then
+    output_file=`mktemp --suffix=.csv`  
+fi
 
 
+while read -r line || [ -n "$line" ]; do
+    field=$(get_field "$line")
+    capture_group=$(get_capture_group "$line")
+    regex=$(get_regex "$line")
+    echo "$field" > "$output_file"
+    extract "$inputs"  "$regex" "$capture_group" >> "$output_file"
+    handle_output "$tmp_output" "$tmp_output2"  "$output_file"   
+done <"$configs"
+mv "$tmp_output" "$output_file" 
 
-format "$output_file" ||   err "cannot create or write into file: $output_file, staus code: $?" 2 2 0   
-
-
-for field in "${fields[@]}"; do
-
-    extract "$inputs" "$regex" "$capture_group" 
-done
+remove_tmp_files || err "error while removing temp files $configs $inputs  $tmp_output2 " $__ERROR $__NOTHING  0
+echo "$output_file"
