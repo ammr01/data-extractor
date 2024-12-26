@@ -88,6 +88,12 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
+## Note
+if you used a csv file for input, use `sed -i 's/\"\"/\"/g' input.csv`, to replace escaped " with unescaped ".
+
+---
+
+
 ## Author
 **Amro Alasmar**
 
